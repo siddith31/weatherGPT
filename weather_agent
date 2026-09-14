@@ -1,0 +1,43 @@
+import os
+import requests
+from langchain_core.tools import tool
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langgraph.prebuilt import create_react_agent
+
+os.environ["GOOGLE_API_KEY"] = "your-google-api-key"
+
+# 1. Define your external weather API tool
+@tool
+def get_current_weather(city: str) -> str:
+    """Fetch real-time weather information for a given city."""
+    # Example using Open-Meteo (No API key needed for testing)
+    geo_url = f"https://geocoding-api.open-meteo.com/v1/search?name={city}&count=1"
+    geo_res = requests.get(geo_url).json()
+   
+    if not geo_res.get("results"):
+        return f"Could not find coordinates for {city}."
+   
+    lat = geo_res["results"][0]["latitude"]
+    lon = geo_res["results"][0]["longitude"]
+   
+    weather_url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true"
+    w_res = requests.get(weather_url).json()
+   
+    current = w_res["current_weather"]
+    return f"The temperature in {city} is {current['temperature']}°C with wind speeds of {current['windspeed']} km/h."
+
+# 2. Initialize the Gemini LLM
+llm = ChatGoogleGenerativeAI(
+    model="gemini-2.0-flash",
+    temperature=0
+)
+
+# 3. Create the LangGraph agent with tool access
+tools = [get_current_weather]
+agent_executor = create_react_agent(llm, tools)
+
+# 4. Query the agent
+response = agent_executor.invoke({"messages": [("user", "What's the weather like in Tokyo right now?")]})
+
+# Print the agent's response
+print(response["messages"][-1].content)
