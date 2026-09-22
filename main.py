@@ -2,7 +2,7 @@ import os
 import requests
 from contextlib import asynccontextmanager
 from typing import Optional, List, Dict, Any
-
+from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, status
 from pydantic import BaseModel, Field
