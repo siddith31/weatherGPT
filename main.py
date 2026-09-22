@@ -117,7 +117,7 @@ app.add_middleware(
     allow_origins=["*"],  # Allows all origins (or specify your frontend domain)
     allow_credentials=True,
     allow_methods=["*"],  # Allows all methods (GET, POST, etc.)
-    allow_headers=["*"],  # Allows all headers (Content-Type, accept, etc.)
+    allow_headers=["*"]  # Allows all headers (Content-Type, accept, etc.)
 )
 
 class ChatRequest(BaseModel):
