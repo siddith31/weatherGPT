@@ -111,6 +111,15 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Add this CORS middleware to allow browser requests
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins (or specify your frontend domain)
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods (GET, POST, etc.)
+    allow_headers=["*"],  # Allows all headers (Content-Type, accept, etc.)
+)
+
 class ChatRequest(BaseModel):
     message: str = Field(..., example="can i play football outside now in Toronto, i am in 12.9716,77.59")
 
