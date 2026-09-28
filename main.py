@@ -1,8 +1,10 @@
 import os
+import logging
 import requests
 from contextlib import asynccontextmanager
 from typing import Optional, List, Dict, Any
-from fastapi.middleware.cors import CORSMiddleware
+
+
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, status
 from pydantic import BaseModel, Field
@@ -12,9 +14,11 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.agents import create_agent
 from langchain_core.messages import SystemMessage
 
+
+
 from disaster.disaster_service import get_disaster_alerts
 from disaster.disaster_monitor import start_disaster_scheduler
-from disaster.disaster_service import get_disaster_alerts as raw_get_disaster_alerts
+
 
 from weather_reference import (
     UV_INDEX_REFERENCE,
@@ -22,6 +26,12 @@ from weather_reference import (
     PRECIPITATION_RANGE_REFERENCE,
     VISIBILITY_RANGE_REFERENCE,
 )
+
+from memory.conversation_memory import init_db, save_message, load_messages
+
+load_dotenv()
+logger = logging.getLogger(__name__)
+
 
 # Load environment variables
 load_dotenv()
@@ -79,21 +89,22 @@ async def lifespan(app: FastAPI):
     if not os.environ.get("GOOGLE_API_KEY"):
         raise RuntimeError("GOOGLE_API_KEY is missing from environment variables or .env file.")
     
-    model_name = os.environ.get("MODEL", "gemini-1.5-flash")
+    model_name = os.environ.get("MODEL", "gemini-3.6-flash")
     
     # Initialize LLM & Agent
     llm = ChatGoogleGenerativeAI(model=model_name)
-    tools = [get_geolocation, get_weather]
+    tools = [get_geolocation, get_weather, get_disaster_alerts]
 
     system_prompt = SystemMessage(
-        """You are a weather expert with access to 2 tools.
+        """You are a weather expert with access to 3 tools.
         Use get_geolocation() to get the geolocation for a city mentioned in the user prompt.
         Use get_weather() to get the weather details from the tool. It returns the data in a JSON format.
+        Use get_disaster_alerts() to check for severe alerts, warnings, and disasters.
         If the city is not given, use the geolocation directly from the user prompt.
         The weather JSON has the data related to temperature, visibility, elevation/altitude, precipitation, uv-index, etc.
-        "Never output raw JSON keys like is_day. Translate is_day: 0 to Nighttime and is_day: 1 to Daytime."
         Refer to UV_INDEX_REFERENCE, PRECIPITATION_RANGE_REFERENCE, WMO_CODE_REFERENCE, VISIBILITY_RANGE_REFERENCE.
         Identify the user persona based on the questions the user asks. 
+        Never output raw JSON keys like is_day. Translate is_day: 0 to Nighttime and is_day: 1 to Daytime.
         For Example: The user persona could be a fisherman going to sea, a farmer watering crops, or an outdoor sports person going for a run or hike.
         Determine what aspect of the weather from the weather data will impact the user and advise accordingly.
         IMPORTANT INSTRUCTION: Do not use your LLM capabilities to find and interpret the weather. Use the given tools only.
@@ -105,10 +116,15 @@ async def lifespan(app: FastAPI):
         tools=tools,
         system_prompt=system_prompt
     )
-    yield
+    
 
 
 # --- 3. App Initialization & Schemas ---
+    await init_db()
+    
+    yield
+
+
 app = FastAPI(
     title="WeatherGPT",
     description="A chat service powered by LangChain and Google Gemini.",
@@ -116,23 +132,13 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Add this CORS middleware to allow browser requests
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins (or specify your frontend domain)
-    allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods (GET, POST, etc.)
-    allow_headers=["*"]  # Allows all headers (Content-Type, accept, etc.)
-)
-
 class ChatRequest(BaseModel):
-    message: str = Field(..., example="can i play football outside now in Toronto, i am in 12.9716,77.59")
+    conversation_id: str = Field(..., min_length=1, example="user1-session1")
+    message: str = Field(..., example="can i play football outside now, i am in 12.9716,77.59?")
 
 class ChatResponse(BaseModel):
     reply: str
-class AlertRequest(BaseModel):
-    latitude: Optional[float] = Field(default=12.9716, example=12.9716)
-    longitude: Optional[float] = Field(default=77.5946, example=77.5946)
+
 
 # --- 4. Helper Function ---
 def extract_text(content: Any) -> str:
@@ -147,48 +153,44 @@ def extract_text(content: Any) -> str:
 
 
 # --- 5. Endpoints ---
-@app.post("/alerts/sachet")
-async def sachet_alerts_endpoint(request: AlertRequest):
-    """
-    Direct endpoint to retrieve SACHET / NDMA disaster alerts without LLM invocation.
-    """
-    try:
-        # Call the underlying function directly
-        alerts_data = raw_get_disaster_alerts(lat=request.latitude, lon=request.longitude)
-        
-        return {
-            "status": "success",
-            "location": {"lat": request.latitude, "lon": request.longitude},
-            "alerts": alerts_data
-        }
-    except Exception as e:
-        logger.error(f"Error fetching SACHET alerts: {str(e)}", exc_info=True)
-        return {
-            "status": "error",
-            "message": str(e),
-            "alerts": []
-        }
-
 @app.post("/chat", response_model=ChatResponse)
 async def chat_endpoint(request: ChatRequest):
     if not agent_executor:
         raise HTTPException(status_code=500, detail="Agent is not initialized.")
     
     try:
-        # Invoke agent asynchronously using ainvoke
+        # Load up to the last 10 messages (5 user/assistant pairs) to prevent context explosion
+        history = await load_messages(request.conversation_id, limit=25)
+
+        # Build the message chain for this request
+        messages = []
+        for role, content in history:
+            messages.append((role, content))
+
+        # Append the current user request
+        messages.append(("user", request.message))
+
+
+        # Invoke agent with full conversational context
         response = await agent_executor.ainvoke({
-            "messages": [("user", request.message)]
+            "messages": messages
         })
         
         last_message = response["messages"][-1]
         text_output = extract_text(last_message.content)
         
+        # Persist the newly generated conversation turn
+        await save_message(request.conversation_id, "user", request.message)
+        await save_message(request.conversation_id, "assistant", text_output)
+        
         return ChatResponse(reply=text_output)
     
     except Exception as e:
+        logger.error(f"Error processing chat request for {request.conversation_id}: {str(e)}", exc_info=True)
+        # Return generic error to user, avoiding exposing raw DB or LangChain stack traces
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
-            detail=f"An error occurred while processing your request: {str(e)}"
+            detail="An error occurred while processing your request. Please try again."
         )
 
 @app.get("/health")
