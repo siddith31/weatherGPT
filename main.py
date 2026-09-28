@@ -126,7 +126,9 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     reply: str
-
+class AlertRequest(BaseModel):
+    latitude: Optional[float] = Field(default=12.9716, example=12.9716)
+    longitude: Optional[float] = Field(default=77.5946, example=77.5946)
 
 # --- 4. Helper Function ---
 def extract_text(content: Any) -> str:
@@ -141,6 +143,27 @@ def extract_text(content: Any) -> str:
 
 
 # --- 5. Endpoints ---
+@app.post("/alerts/sachet")
+async def sachet_alerts_endpoint(request: AlertRequest):
+    """
+    Direct endpoint to retrieve SACHET / NDMA disaster alerts without LLM invocation.
+    """
+    try:
+        # Calls the existing disaster service tool directly
+        alerts_data = get_disaster_alerts(lat=request.latitude, lon=request.longitude)
+        return {
+            "status": "success",
+            "location": {"lat": request.latitude, "lon": request.longitude},
+            "alerts": alerts_data
+        }
+    except Exception as e:
+        logger.error(f"Error fetching SACHET alerts: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve disaster alert data from SACHET."
+        )
+
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat_endpoint(request: ChatRequest):
     if not agent_executor:
