@@ -149,8 +149,13 @@ async def sachet_alerts_endpoint(request: AlertRequest):
     Direct endpoint to retrieve SACHET / NDMA disaster alerts without LLM invocation.
     """
     try:
-        # Calls the existing disaster service tool directly
-        alerts_data = get_disaster_alerts(lat=request.latitude, lon=request.longitude)
+        # Call the underlying tool function directly via invoke
+        # or import get_disaster_alerts directly from disaster_service
+        alerts_data = get_disaster_alerts.invoke({
+            "lat": request.latitude,
+            "lon": request.longitude
+        })
+
         return {
             "status": "success",
             "location": {"lat": request.latitude, "lon": request.longitude},
@@ -158,10 +163,12 @@ async def sachet_alerts_endpoint(request: AlertRequest):
         }
     except Exception as e:
         logger.error(f"Error fetching SACHET alerts: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to retrieve disaster alert data from SACHET."
-        )
+        # Return structured error details instead of raw crash
+        return {
+            "status": "error",
+            "message": str(e),
+            "alerts": []
+        }
 
 
 @app.post("/chat", response_model=ChatResponse)
