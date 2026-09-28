@@ -12,6 +12,10 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.agents import create_agent
 from langchain_core.messages import SystemMessage
 
+from disaster.disaster_service import get_disaster_alerts
+from disaster.disaster_monitor import start_disaster_scheduler
+from disaster.disaster_service import get_disaster_alerts as raw_get_disaster_alerts
+
 from weather_reference import (
     UV_INDEX_REFERENCE,
     WMO_CODE_REFERENCE,
@@ -149,13 +153,9 @@ async def sachet_alerts_endpoint(request: AlertRequest):
     Direct endpoint to retrieve SACHET / NDMA disaster alerts without LLM invocation.
     """
     try:
-        # Call the underlying tool function directly via invoke
-        # or import get_disaster_alerts directly from disaster_service
-        alerts_data = get_disaster_alerts.invoke({
-            "lat": request.latitude,
-            "lon": request.longitude
-        })
-
+        # Call the underlying function directly
+        alerts_data = raw_get_disaster_alerts(lat=request.latitude, lon=request.longitude)
+        
         return {
             "status": "success",
             "location": {"lat": request.latitude, "lon": request.longitude},
@@ -163,13 +163,11 @@ async def sachet_alerts_endpoint(request: AlertRequest):
         }
     except Exception as e:
         logger.error(f"Error fetching SACHET alerts: {str(e)}", exc_info=True)
-        # Return structured error details instead of raw crash
         return {
             "status": "error",
             "message": str(e),
             "alerts": []
         }
-
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat_endpoint(request: ChatRequest):
