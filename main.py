@@ -87,6 +87,7 @@ async def lifespan(app: FastAPI):
         Use get_weather() to get the weather details from the tool. It returns the data in a JSON format.
         If the city is not given, use the geolocation directly from the user prompt.
         The weather JSON has the data related to temperature, visibility, elevation/altitude, precipitation, uv-index, etc.
+        "Never output raw JSON keys like is_day. Translate is_day: 0 to Nighttime and is_day: 1 to Daytime."
         Refer to UV_INDEX_REFERENCE, PRECIPITATION_RANGE_REFERENCE, WMO_CODE_REFERENCE, VISIBILITY_RANGE_REFERENCE.
         Identify the user persona based on the questions the user asks. 
         For Example: The user persona could be a fisherman going to sea, a farmer watering crops, or an outdoor sports person going for a run or hike.
